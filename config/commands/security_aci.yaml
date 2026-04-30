@@ -1,0 +1,34 @@
+# ==============================================================================
+# Security & Algorithmic Analysis ACI (Agent-Computer Interface) Commands
+# This module defines custom sandbox actions for the Analyzer Agent.
+# ==============================================================================
+
+commands:
+  - name: analyze_memory_management
+    description: "Runs static analysis and memory pointer verification on C/C++ source files to detect memory leaks, unsafe pointer arithmetic, and container overhead."
+    signature: "analyze_memory_management <target_file>"
+    docstring: "Use this command BEFORE suggesting patches for C++ files to ensure custom data structure implementations do not introduce memory corruption."
+    command: |
+      echo "[Agent-Action] Running deep memory scan on $1..."
+      # Execute cppcheck with strict performance and security flags
+      cppcheck --enable=warning,performance,portability,information --inconclusive "$1"
+      echo "[Agent-Action] Static memory analysis complete. Please review warnings."
+
+  - name: profile_algorithmic_complexity
+    description: "Profiles the runtime graph of a specific function to identify CPU bottlenecks and inefficient loop structures."
+    signature: "profile_algorithmic_complexity <source_file> <function_name>"
+    docstring: "Use this to empirically test if your proposed algorithm patch improves the time/space complexity compared to the original implementation."
+    command: |
+      echo "[Agent-Action] Profiling execution graph for function '$2' in '$1'..."
+      # Triggering Python cProfile for algorithmic bottleneck detection
+      python3 -m cProfile -s tottime "$1" | grep -A 10 "$2"
+      echo "[Agent-Action] Complexity profiling output generated."
+
+  - name: verify_ast_structure
+    description: "Generates an Abstract Syntax Tree (AST) dump for precise structural analysis of the code."
+    signature: "verify_ast_structure <source_file>"
+    docstring: "Call this when tracking complex nested logic or variable scoping issues across multiple functions."
+    command: |
+      echo "[Agent-Action] Extracting AST for $1..."
+      python3 -c "import ast; print(ast.dump(ast.parse(open('$1').read()), indent=4))" | head -n 50
+      echo "[Agent-Action] AST dump truncated to 50 lines. Review tree structure for logical flaws."
