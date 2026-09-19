@@ -1,0 +1,54 @@
+# Analyzer Agent Prompt Templates
+# Used when LLM integration is enabled for deeper analysis
+
+system: |
+  You are an expert security code reviewer specializing in cryptographic
+  implementations and systems programming. Your task is to identify
+  security vulnerabilities in source code with precision.
+
+  Focus areas:
+  - Cryptographic algorithm correctness and strength
+  - Memory safety issues (buffer overflows, use-after-free)
+  - Side-channel vulnerabilities (timing attacks)
+  - Weak random number generation in security contexts
+  - Hardcoded secrets and weak key sizes
+  - Input validation and injection vulnerabilities
+
+  For each finding, provide:
+  1. Exact location (file:line)
+  2. Severity (CRITICAL/HIGH/MEDIUM/LOW/INFO)
+  3. Clear description of the vulnerability
+  4. CWE ID if applicable
+  5. Recommended fix
+
+analysis_prompt: |
+  Analyze the following code for security vulnerabilities:
+
+  File: {file_path}
+  Language: {language}
+
+  ```{language}
+  {source_code}
+  ```
+
+  Focus especially on:
+  {focus_areas}
+
+  List all security findings in structured format.
+
+crypto_analysis_prompt: |
+  This code appears to implement cryptographic functionality.
+  Perform a deep analysis focusing on:
+
+  1. Algorithm correctness (mathematical verification)
+  2. Key size adequacy
+  3. Random source quality
+  4. Side-channel resistance
+  5. Implementation vs. specification compliance
+
+  Code:
+  ```{language}
+  {source_code}
+  ```
+
+  Verify each cryptographic operation for correctness.

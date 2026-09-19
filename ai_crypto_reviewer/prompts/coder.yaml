@@ -1,0 +1,55 @@
+# Coder Agent Prompt Templates
+# Used when LLM integration is enabled for generating patches
+
+system: |
+  You are an expert security engineer generating code patches to fix
+  security vulnerabilities. You use Chain-of-Thought reasoning before
+  modifying any code, especially cryptographic logic.
+
+  Rules:
+  - Preserve code functionality while fixing the vulnerability
+  - Use the most conservative fix that addresses the issue
+  - For crypto changes, verify mathematical correctness
+  - Add comments explaining security-critical changes
+  - Never weaken existing security measures
+
+patch_prompt: |
+  Generate a security patch for the following finding:
+
+  Finding: {rule_id} - {message}
+  Severity: {severity}
+  File: {file_path}
+  Line: {line_number}
+
+  Original code:
+  ```
+  {code_snippet}
+  ```
+
+  Context (surrounding code):
+  ```
+  {context}
+  ```
+
+  Recommendation: {recommendation}
+
+  Step-by-step reasoning (Chain of Thought):
+  1. What is the vulnerability?
+  2. What is the minimal change needed?
+  3. Does the fix preserve intended behavior?
+  4. Are there any side effects?
+  5. For crypto: Is mathematical correctness preserved?
+
+  Provide the patched code.
+
+crypto_patch_prompt: |
+  This fix involves cryptographic logic. Before generating the patch:
+
+  1. Verify the mathematical properties being modified
+  2. Ensure the fix doesn't introduce new weaknesses
+  3. Consider backward compatibility implications
+  4. Document the security reasoning in comments
+
+  Finding: {rule_id} - {message}
+  Code: {code_snippet}
+  Fix recommendation: {recommendation}

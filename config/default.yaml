@@ -1,0 +1,52 @@
+# AI Crypto Security Reviewer - Default Configuration
+# Copy this file and customize for your project
+
+# Target path (required, can also be set via CLI)
+target_path: ""
+
+# Output directory for reports
+output_dir: "review_output"
+
+# Source language: auto | python | cpp | c
+language: "auto"
+
+# --- Agent Configuration ---
+
+analyzer:
+  enabled: true
+  max_retries: 3
+  timeout_seconds: 300
+
+coder:
+  enabled: true
+  max_retries: 3
+  timeout_seconds: 300
+
+tester:
+  enabled: true
+  max_retries: 1
+  timeout_seconds: 300
+  test_command: ""  # Custom test command; leave empty for auto-detect
+
+# --- Tool Configuration ---
+
+tools:
+  cppcheck_enabled: true
+  flake8_enabled: true
+  bandit_enabled: true
+  memory_check_enabled: true
+
+# --- Pipeline Behavior ---
+
+auto_patch: true       # Generate patches automatically
+run_tests: true        # Test patches in sandbox
+max_findings: 500      # Maximum findings to report
+min_severity: "info"   # Minimum severity: info | low | medium | high | critical
+verbose: false         # Enable verbose logging
+
+# --- Crypto-Specific Settings ---
+
+crypto_strict_mode: true     # Enable strict cryptographic analysis
+check_weak_algorithms: true  # Detect weak/deprecated algorithms
+check_key_sizes: true        # Verify minimum key sizes
+check_random_sources: true   # Flag non-cryptographic PRNGs

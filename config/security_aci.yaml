@@ -1,0 +1,67 @@
+# ==============================================================================
+# Security & Algorithmic Analysis ACI (Agent-Computer Interface) Commands
+# This module defines custom sandbox actions for the Analyzer Agent.
+# ==============================================================================
+
+commands:
+  - name: analyze_memory_management
+    description: "Runs static analysis and memory pointer verification on C/C++ source files to detect memory leaks, unsafe pointer arithmetic, and container overhead."
+    signature: "analyze_memory_management <target_file>"
+    docstring: "Use this command BEFORE suggesting patches for C++ files to ensure custom data structure implementations do not introduce memory corruption."
+    command: |
+      echo "[Agent-Action] Running deep memory scan on $1..."
+      cppcheck --enable=warning,performance,portability,information --inconclusive "$1"
+      echo "[Agent-Action] Static memory analysis complete. Please review warnings."
+
+  - name: profile_algorithmic_complexity
+    description: "Profiles the runtime graph of a specific function to identify CPU bottlenecks and inefficient loop structures."
+    signature: "profile_algorithmic_complexity <source_file> <function_name>"
+    docstring: "Use this to empirically test if your proposed algorithm patch improves the time/space complexity compared to the original implementation."
+    command: |
+      echo "[Agent-Action] Profiling execution graph for function '$2' in '$1'..."
+      python3 -m cProfile -s tottime "$1" | grep -A 10 "$2"
+      echo "[Agent-Action] Complexity profiling output generated."
+
+  - name: verify_ast_structure
+    description: "Generates an Abstract Syntax Tree (AST) dump for precise structural analysis of the code."
+    signature: "verify_ast_structure <source_file>"
+    docstring: "Call this when tracking complex nested logic or variable scoping issues across multiple functions."
+    command: |
+      echo "[Agent-Action] Extracting AST for $1..."
+      python3 -c "import ast; print(ast.dump(ast.parse(open('$1').read()), indent=4))" | head -n 50
+      echo "[Agent-Action] AST dump truncated to 50 lines. Review tree structure for logical flaws."
+
+  - name: verify_crypto_parameters
+    description: "Validates cryptographic parameter strength (key sizes, algorithm choices, random sources)."
+    signature: "verify_crypto_parameters <source_file>"
+    docstring: "Run this before accepting any patch that modifies cryptographic logic to ensure parameter strength is maintained or improved."
+    command: |
+      echo "[Agent-Action] Verifying cryptographic parameters in $1..."
+      python3 -c "
+      import re, sys
+      src = open('$1').read()
+      issues = []
+      if re.search(r'MD5|DES|RC4', src, re.I): issues.append('Weak algorithm detected')
+      if re.search(r'key.?size.?=.?\d{1,3}\b', src, re.I): issues.append('Possible weak key size')
+      if re.search(r'rand\(\)|random\.random', src): issues.append('Non-crypto PRNG detected')
+      for i in issues: print(f'  WARNING: {i}')
+      if not issues: print('  No obvious crypto parameter issues found.')
+      "
+      echo "[Agent-Action] Crypto parameter verification complete."
+
+  - name: check_timing_safety
+    description: "Identifies timing-sensitive operations in cryptographic code that may be vulnerable to side-channel attacks."
+    signature: "check_timing_safety <source_file>"
+    docstring: "Use this when reviewing signature verification, password comparison, or MAC validation code."
+    command: |
+      echo "[Agent-Action] Checking timing safety in $1..."
+      python3 -c "
+      import re
+      src = open('$1').read()
+      for i, line in enumerate(src.splitlines(), 1):
+          if re.search(r'(token|sig|hash|mac|hmac|password)\s*==', line, re.I):
+              print(f'  Line {i}: Timing-unsafe comparison: {line.strip()[:80]}')
+          if re.search(r'compare_digest', line):
+              print(f'  Line {i}: Constant-time comparison found (GOOD): {line.strip()[:80]}')
+      "
+      echo "[Agent-Action] Timing safety analysis complete."
