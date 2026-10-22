@@ -8,7 +8,7 @@
 
 **An advanced, multi-agent code review and auto-remediation system optimized for deep logical vulnerabilities in C++ and Python codebases, with a specialized focus on cryptographic implementations.**
 
-[Report Bug](https://github.com/yourusername/AI-Crypto-Security-Reviewer/issues) · [Request Feature](https://github.com/yourusername/AI-Crypto-Security-Reviewer/issues)
+[Report Bug](https://github.com/hnuDeng/AI-Crypto-Security-Reviewer/issues) · [Request Feature](https://github.com/hnuDeng/AI-Crypto-Security-Reviewer/issues)
 
 </div>
 
@@ -49,6 +49,10 @@ The system uses a **three-agent pipeline** (Analyzer ➡️ Coder ➡️ Tester)
 3. 🧪 **Tester Agent**: Validates patches via syntax execution, sandbox execution, and regression testing.
 4. 📄 **Output**: Detailed Review Report (JSON / SARIF).
 
+Patch validation writes to a temporary copy of the selected directory or file. Target-relative paths and absolute paths inside that target map to the copy; parent traversal and paths outside the target are rejected. Python syntax checks read the patched copy, and single-file reviews run commands from the copy's temporary directory.
+
+The sandbox provides a temporary filesystem copy, not operating-system, process, or network isolation. Test commands execute with the current user's host permissions. Only run tests from codebases you trust, or use a separately restricted environment for untrusted code.
+
 ---
 
 ## ✨ Features (47 Detection Rules)
@@ -72,7 +76,7 @@ The system uses a **three-agent pipeline** (Analyzer ➡️ Coder ➡️ Tester)
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/AI-Crypto-Security-Reviewer.git
+   git clone https://github.com/hnuDeng/AI-Crypto-Security-Reviewer.git
    cd AI-Crypto-Security-Reviewer
    ```
 
@@ -151,10 +155,19 @@ pipeline.save_sarif_report(report, 'output/report.sarif')
 
 ## 🛠️ Tests
 
-Run the test suite to ensure everything is working correctly:
+From a virtual environment, install the development dependencies and run the test suite:
 
 ```bash
-python -m pytest tests/ -v
+python -m pip install -e ".[dev]"
+python -m pytest -q
+```
+
+GitHub Actions runs the same suite on Ubuntu and Windows with Python 3.10 and 3.12 for pushes and pull requests. The regression tests cover absolute patch paths, relative CLI targets, rejected paths outside the target, single-file targets, filenames containing quotes, and invalid syntax in patched copies. They also verify that the original source files remain unchanged.
+
+To run only the patch-validation regression tests:
+
+```bash
+python -m pytest -q tests/test_sandbox.py tests/test_agents.py
 ```
 
 ---

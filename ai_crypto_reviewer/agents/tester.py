@@ -10,6 +10,7 @@ This agent:
 
 from __future__ import annotations
 
+import sys
 import time
 
 from ai_crypto_reviewer.agents.base import AgentContext, BaseAgent
@@ -103,11 +104,11 @@ class ValidationAgent(BaseAgent):
         try:
             with Sandbox(context.target_path) as sandbox:
                 # Apply all patches
-                applied_count = 0
+                applied_patches: list[Patch] = []
                 for patch in context.patches:
                     try:
                         sandbox.apply_patch_to_file(patch.file_path, patch.patched_code)
-                        applied_count += 1
+                        applied_patches.append(patch)
                     except Exception as e:
                         results.append(RunResult(
                             passed=False,
@@ -115,7 +116,7 @@ class ValidationAgent(BaseAgent):
                             output=f"Failed to apply patch: {e}",
                         ))
 
-                self.log(f"Applied {applied_count}/{len(context.patches)} patches to sandbox")
+                self.log(f"Applied {len(applied_patches)}/{len(context.patches)} patches to sandbox")
 
                 # Run existing tests
                 test_output, test_rc = sandbox.run_python_tests(
@@ -132,10 +133,18 @@ class ValidationAgent(BaseAgent):
                 ))
 
                 # Run syntax check on all patched Python files
-                for patch in context.patches:
+                for patch in applied_patches:
                     if patch.file_path.endswith(".py"):
+                        sandbox_file = sandbox.get_sandbox_copy(patch.file_path)
                         check_output, check_rc = sandbox.run_command(
-                            ["python", "-c", f"import ast; ast.parse(open('{patch.file_path}').read()); print('OK')"],
+                            [
+                                sys.executable,
+                                "-c",
+                                "import ast, pathlib, sys; "
+                                "source = pathlib.Path(sys.argv[1]).read_text(encoding='utf-8'); "
+                                "ast.parse(source, filename=sys.argv[1]); print('OK')",
+                                str(sandbox_file),
+                            ],
                             timeout=30,
                         )
                         results.append(RunResult(
