@@ -84,7 +84,7 @@ class AnalyzerAgent(BaseAgent):
 
     def _discover_source_files(self, target_path: str) -> list[str]:
         """Discover all source files in the target path."""
-        target = Path(target_path)
+        target = Path(target_path).resolve()
         all_extensions = self.PYTHON_EXTENSIONS | self.CPP_EXTENSIONS
 
         if target.is_file():

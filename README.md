@@ -6,9 +6,9 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](http://makeapullrequest.com)
 
-**An advanced, multi-agent code review and auto-remediation system optimized for deep logical vulnerabilities in C++ and Python codebases, with a specialized focus on cryptographic implementations.**
+**A rule-based code review and suggested-patch pipeline for Python and C/C++, with checks for common cryptographic and memory-safety patterns.**
 
-[Report Bug](https://github.com/yourusername/AI-Crypto-Security-Reviewer/issues) · [Request Feature](https://github.com/yourusername/AI-Crypto-Security-Reviewer/issues)
+[Report Bug](https://github.com/hnuDeng/AI-Crypto-Security-Reviewer/issues) · [Request Feature](https://github.com/hnuDeng/AI-Crypto-Security-Reviewer/issues)
 
 </div>
 
@@ -37,27 +37,31 @@
 
 ### Core Problem
 
-Traditional static analysis tools often fail to understand complex business logic, especially in algorithmic implementations and cryptographic engines (e.g., custom RSA implementations, primality testing algorithms). This project introduces an automated multi-agent pipeline capable of identifying memory management issues, algorithmic inefficiencies, and security flaws, generating verified patches.
+The project combines pattern-based checks and optional external tools to flag selected security issues in source code. It proposes rule-based patches and reports available validation results. Detection and patching are heuristic: findings may contain false positives or omissions, and suggested changes require review and project-specific tests.
 
 ### Architecture
 
-The system uses a **three-agent pipeline** (Analyzer ➡️ Coder ➡️ Tester) with Chain-of-Thought reasoning before modifying any cryptographic logic.
+The system uses three software components (Analyzer ➡️ Coder ➡️ Tester). The built-in pipeline does not call a language model; crypto-related debug messages are fixed text, not mathematical proofs.
 
 **Pipeline Flow:**
 1. 🔍 **Analyzer Agent**: Scans code using pattern-based static analysis, cryptographic verification, memory safety analysis, and external tools (`cppcheck`, `flake8`, `bandit`).
-2. ✍️ **Coder Agent**: Generates patches using rule-based fix templates with Chain-of-Thought reasoning for crypto changes.
+2. ✍️ **Coder Agent**: Proposes patches or warning comments using rule-based templates.
 3. 🧪 **Tester Agent**: Validates patches via syntax execution, sandbox execution, and regression testing.
 4. 📄 **Output**: Detailed Review Report (JSON / SARIF).
 
+Patch validation writes to a temporary copy of the selected directory or file. Target-relative paths and absolute paths inside that target map to the copy; parent traversal and paths outside the target are rejected. Python syntax checks read the patched copy, and single-file reviews run commands from the copy's temporary directory.
+
+The sandbox provides a temporary filesystem copy, not operating-system, process, or network isolation. Test commands execute with the current user's host permissions. Only run tests from codebases you trust, or use a separately restricted environment for untrusted code.
+
 ---
 
-## ✨ Features (47 Detection Rules)
+## ✨ Features
 
-- 🐍 **Python (20 rules)**: `eval`, `exec`, hardcoded secrets, weak crypto, SQL injection, etc.
-- ⚙️ **C/C++ (12 rules)**: Buffer overflows, format strings, memory leaks, etc.
-- 🔐 **Cryptography (8 rules)**: Weak algorithms, key sizes, static IVs, timing attacks, etc.
-- 🛡️ **Memory Safety (7 rules)**: Use-after-free, NULL dereference, unbounded copies, etc.
-- 🔄 **Fix Verification**: The `ValidationAgent` automatically re-scans patched files to confirm original findings are resolved (can be disabled via `skip_fix_verification=True`).
+- 🐍 **Python**: Rules for `eval`, `exec`, hardcoded secrets, weak crypto, SQL injection patterns, and more.
+- ⚙️ **C/C++**: Rules for unbounded copies, format strings, allocation patterns, and more.
+- 🔐 **Cryptography**: Pattern checks for selected weak algorithms, key sizes, randomness, and timing risks.
+- 🛡️ **Memory Safety**: Heuristic checks for selected allocation, pointer and copy patterns.
+- 🔄 **Fix Re-scan**: The `ValidationAgent` re-runs supported rules against proposed changes and flags ambiguous cases as unverified (can be disabled via `skip_fix_verification=True`).
 
 ---
 
@@ -72,7 +76,7 @@ The system uses a **three-agent pipeline** (Analyzer ➡️ Coder ➡️ Tester)
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/AI-Crypto-Security-Reviewer.git
+   git clone https://github.com/hnuDeng/AI-Crypto-Security-Reviewer.git
    cd AI-Crypto-Security-Reviewer
    ```
 
@@ -142,6 +146,10 @@ The pipeline supports two standard report formats for easy integration:
 - **JSON** (Default): Full structured report (`review_report.json`).
 - **SARIF v2.1.0**: Industry standard for CI/CD integration like GitHub Code Scanning or Azure DevOps (`review_report.sarif`).
 
+JSON and SARIF report each proposed patch as `fix` or `warning` and include individual validation results. The overall validation, patch application, sandbox test-suite, and fix re-scan statuses distinguish `passed`, `failed`, and `not_run`; a syntax check alone does not imply the sandbox suite ran. A rule re-scan can confirm only that the supported detector no longer finds the mapped issue. Unsupported rules, ambiguous changes, warning-only patches, invalid Python, or patches that could not be applied are reported as unverified. Re-scanning is not a proof of security or semantic correctness.
+
+When multiple patches target the same file, non-overlapping changes from the same original version are combined in the temporary copy before testing. Overlapping changes and stale source versions are rejected instead of silently overwriting one another. SARIF recommendations are informational properties, not machine-applicable fixes.
+
 To save as SARIF via API:
 ```python
 pipeline.save_sarif_report(report, 'output/report.sarif')
@@ -151,10 +159,29 @@ pipeline.save_sarif_report(report, 'output/report.sarif')
 
 ## 🛠️ Tests
 
-Run the test suite to ensure everything is working correctly:
+### Offline rule regression
+
+With the existing project dependencies installed, run the built-in, hand-written Python and C examples without an API key or external analysis tools:
 
 ```bash
-python -m pytest tests/ -v
+python -m ai_crypto_reviewer.offline_evaluation
+```
+
+The JSON output reports expected and detected results for each rule-level example and counts matches, false positives, and false negatives. These eight synthetic examples are a functional regression check, not an estimate of real-world detection accuracy. They do not execute the sample source code.
+
+From a virtual environment, install the development dependencies and run the test suite:
+
+```bash
+python -m pip install -e ".[dev]"
+python -m pytest -q
+```
+
+GitHub Actions runs the same suite on Ubuntu and Windows with Python 3.10 and 3.12 for pushes and pull requests. The regression tests cover absolute patch paths, relative CLI targets, rejected paths outside the target, single-file targets, filenames containing quotes, and invalid syntax in patched copies. They also verify that the original source files remain unchanged.
+
+To run only the patch-validation regression tests:
+
+```bash
+python -m pytest -q tests/test_sandbox.py tests/test_agents.py
 ```
 
 ---

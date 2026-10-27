@@ -127,7 +127,7 @@ class SecurityReviewPipeline:
                 context = self.tester.execute(context)
                 report.test_results = context.test_results
                 passed = sum(1 for r in context.test_results if r.passed)
-                logger.info(f"  Tests: {passed}/{len(context.test_results)} passed")
+                logger.info(f"  Validation checks: {passed}/{len(context.test_results)} passed")
             except Exception as e:
                 error_msg = f"Tester failed: {e}"
                 logger.error(error_msg)
@@ -152,7 +152,7 @@ class SecurityReviewPipeline:
         logger.info(f"  Findings: {len(report.findings)}")
         logger.info(f"  Critical: {len(report.critical_findings)}")
         logger.info(f"  Patches: {len(report.patches)}")
-        logger.info(f"  Tests passed: {report.all_tests_passed}")
+        logger.info(f"  Sandbox test status: {report.test_status}; validation status: {report.validation_status}")
         logger.info("=" * 60)
 
         return report
@@ -199,7 +199,11 @@ class SecurityReviewPipeline:
         if report.test_results:
             passed = sum(1 for r in report.test_results if r.passed)
             total = len(report.test_results)
-            lines.append(f"Tests: {passed}/{total} passed")
+            lines.append(f"Validation checks: {passed}/{total} passed")
+        if report.test_status == "not_run":
+            lines.append("Tests: not run")
+        else:
+            lines.append(f"Tests: {report.test_status}")
 
         if report.errors:
             lines.extend(["", "Errors:"] + [f"  - {e}" for e in report.errors])

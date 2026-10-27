@@ -1,0 +1,10 @@
+[
+  {"id":"eval-call","language":"python","rule_id":"SEC101","expected":true,"source":"value = eval(input())\n"},
+  {"id":"safe-literal","language":"python","rule_id":"SEC101","expected":false,"source":"import ast\nvalue = ast.literal_eval(input())\n"},
+  {"id":"weak-md5","language":"python","rule_id":"SEC113","expected":true,"source":"import hashlib\ndigest = hashlib.md5(data).hexdigest()\n"},
+  {"id":"safe-sha256","language":"python","rule_id":"SEC113","expected":false,"source":"import hashlib\ndigest = hashlib.sha256(data).hexdigest()\n"},
+  {"id":"unsafe-yaml","language":"python","rule_id":"SEC107","expected":true,"source":"import yaml\nvalue = yaml.load(data)\n"},
+  {"id":"safe-yaml","language":"python","rule_id":"SEC107","expected":false,"source":"import yaml\nvalue = yaml.safe_load(data)\n"},
+  {"id":"unsafe-strcpy","language":"c","rule_id":"CSEC001","expected":true,"source":"void copy(char *dest, const char *src) { strcpy(dest, src); }\n"},
+  {"id":"bounded-copy","language":"c","rule_id":"CSEC001","expected":false,"source":"void copy(char *dest, const char *src) { snprintf(dest, 64, \"%s\", src); }\n"}
+]

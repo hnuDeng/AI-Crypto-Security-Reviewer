@@ -4,7 +4,7 @@ This agent takes findings from the Analyzer Agent and produces concrete code
 patches (diffs) to remediate each identified vulnerability. It uses:
 - Rule-based fix templates for common vulnerability patterns
 - Context-aware patching that preserves surrounding code
-- Chain-of-Thought reasoning before modifying cryptographic logic
+- Contextual logging before suggesting cryptographic changes
 """
 
 from __future__ import annotations
@@ -58,8 +58,7 @@ class CoderAgent(BaseAgent):
         if not source:
             return None
 
-        # Chain of Thought: reason about the fix before applying
-        cot_reasoning = self._chain_of_thought(finding)
+        self._chain_of_thought(finding)
 
         # Dispatch to the appropriate fix generator
         fix_fn = self._get_fix_function(finding)
@@ -70,11 +69,7 @@ class CoderAgent(BaseAgent):
         return self._add_warning_comment(finding, source)
 
     def _chain_of_thought(self, finding: Finding) -> str:
-        """Generate Chain-of-Thought reasoning for the fix.
-
-        For cryptographic modifications, this ensures we reason through
-        the mathematical implications before applying changes.
-        """
+        """Log fixed contextual reminders; this does not verify a proposed fix."""
         reasoning = f"[CoT] Finding: {finding.rule_id} ({finding.severity.value})\n"
         reasoning += f"[CoT] Issue: {finding.message}\n"
         reasoning += f"[CoT] Location: {finding.file_path}:{finding.line_number}\n"
@@ -418,6 +413,7 @@ class CoderAgent(BaseAgent):
                 finding=finding,
                 start_line=finding.line_number,
                 end_line=finding.line_number,
+                kind="warning",
             )
         return Patch(
             file_path=finding.file_path,

@@ -43,7 +43,7 @@ class TestSarifReport:
     def test_sarif_with_recommendation(self):
         f = Finding("SEC101", Severity.CRITICAL, "eval()", "test.py", 5, recommendation="Use ast.literal_eval")
         result = finding_to_sarif_result(f)
-        assert result["fixes"][0]["description"]["text"] == "Use ast.literal_eval"
+        assert result["properties"]["recommendation"] == "Use ast.literal_eval"
 
     def test_sarif_file_path_normalization(self):
         f = Finding("TEST", Severity.LOW, "msg", "path\\to\\file.py", 1)
@@ -149,3 +149,245 @@ class TestFixVerification:
         fix_results = [r for r in context.test_results if "fix_verify" in r.test_name]
         assert len(fix_results) == 1
         assert not fix_results[0].passed  # eval should still be present
+
+    @pytest.mark.parametrize(
+        "original,patched,line_number",
+        [
+            ('value = eval(input())\n', '# header\nvalue = eval(input())\n', 1),
+            ('# header\nvalue = eval(input())\n', 'value = eval(input())\n', 2),
+        ],
+    )
+    def test_shifted_vulnerability_is_not_reported_resolved(self, original, patched, line_number):
+        from ai_crypto_reviewer.agents.tester import ValidationAgent
+        from ai_crypto_reviewer.agents.base import AgentContext
+
+        finding = Finding("SEC101", Severity.CRITICAL, "eval()", "example.py", line_number)
+        patch = Patch("example.py", original, patched, "Shift lines only", finding=finding)
+        context = AgentContext(target_path="example.py", patches=[patch])
+
+        results = ValidationAgent(config={"skip_sandbox": True}).execute(context).test_results
+        verification = next(result for result in results if result.test_name.startswith("fix_verify:"))
+
+        assert not verification.passed
+        assert "resolved" not in verification.output.lower()
+
+    def test_fix_one_of_two_same_rule_findings(self):
+        from ai_crypto_reviewer.agents.tester import ValidationAgent
+        from ai_crypto_reviewer.agents.base import AgentContext
+
+        original = 'first = eval("1")\nsecond = eval("2")\n'
+        patched = 'first = 1\nsecond = eval("2")\n'
+        finding = Finding("SEC101", Severity.CRITICAL, "eval()", "example.py", 1)
+        patch = Patch("example.py", original, patched, "Fix first finding", finding=finding)
+
+        results = ValidationAgent(config={"skip_sandbox": True}).execute(
+            AgentContext(target_path="example.py", patches=[patch])
+        ).test_results
+        verification = next(result for result in results if result.test_name.startswith("fix_verify:"))
+
+        assert verification.passed
+        assert "no longer detected" in verification.output.lower()
+
+    def test_unmapped_finding_is_not_reported_resolved(self):
+        from ai_crypto_reviewer.agents.tester import ValidationAgent
+        from ai_crypto_reviewer.agents.base import AgentContext
+
+        original = 'value = eval(input())\n'
+        patched = 'other = eval(input())\n'
+        finding = Finding("SEC101", Severity.CRITICAL, "eval()", "example.py", 1)
+        patch = Patch("example.py", original, patched, "Ambiguous modification", finding=finding)
+
+        results = ValidationAgent(config={"skip_sandbox": True}).execute(
+            AgentContext(target_path="example.py", patches=[patch])
+        ).test_results
+        verification = next(result for result in results if result.test_name.startswith("fix_verify:"))
+
+        assert not verification.passed
+        assert "resolved" not in verification.output.lower()
+
+    def test_rule_not_supported_by_verifier_is_unverified(self):
+        from ai_crypto_reviewer.agents.tester import ValidationAgent
+        from ai_crypto_reviewer.agents.base import AgentContext
+
+        original = 'value = random.random()\n'
+        patched = 'value = secrets.randbelow(10)\n'
+        finding = Finding("WEAK-RANDOM", Severity.HIGH, "weak randomness", "example.py", 1)
+        patch = Patch("example.py", original, patched, "Change random source", finding=finding)
+
+        results = ValidationAgent(config={"skip_sandbox": True}).execute(
+            AgentContext(target_path="example.py", patches=[patch])
+        ).test_results
+        verification = next(result for result in results if result.test_name.startswith("fix_verify:"))
+
+        assert not verification.passed
+        assert "unverified" in verification.output.lower()
+
+    def test_warning_only_patch_is_not_a_verified_fix(self):
+        from ai_crypto_reviewer.agents.base import AgentContext
+        from ai_crypto_reviewer.agents.coder import CoderAgent
+        from ai_crypto_reviewer.agents.tester import ValidationAgent
+
+        source = 'value = eval(input())\n'
+        finding = Finding("SEC101", Severity.CRITICAL, "eval()", "example.py", 1)
+        patch = CoderAgent()._add_warning_comment(finding, source)
+        context = AgentContext(target_path="example.py", patches=[patch])
+
+        results = ValidationAgent(config={"skip_sandbox": True}).execute(context).test_results
+        verification = next(result for result in results if result.test_name.startswith("fix_verify:"))
+
+        assert patch.kind == "warning"
+        assert not verification.passed
+        assert "warning" in verification.output.lower()
+
+    def test_invalid_python_cannot_be_reported_as_resolved(self):
+        from ai_crypto_reviewer.agents.tester import ValidationAgent
+        from ai_crypto_reviewer.agents.base import AgentContext
+
+        finding = Finding("SEC101", Severity.CRITICAL, "eval()", "example.py", 1)
+        patch = Patch("example.py", 'value = eval(input())\n', 'def broken(\n', "Broken code", finding=finding)
+        results = ValidationAgent(config={"skip_sandbox": True}).execute(
+            AgentContext(target_path="example.py", patches=[patch])
+        ).test_results
+
+        verification = next(result for result in results if result.test_name.startswith("fix_verify:"))
+        assert not verification.passed
+        assert "unverified" in verification.output.lower()
+
+    def test_patch_without_finding_cannot_be_reported_verified(self):
+        from ai_crypto_reviewer.agents.tester import ValidationAgent
+        from ai_crypto_reviewer.agents.base import AgentContext
+
+        patch = Patch("example.py", "value = 1\n", "value = 2\n", "Unlinked patch")
+        results = ValidationAgent(config={"skip_sandbox": True}).execute(
+            AgentContext(target_path="example.py", patches=[patch])
+        ).test_results
+
+        verification = next(result for result in results if result.test_name.startswith("fix_verify:"))
+        assert not verification.passed
+        assert "unverified" in verification.output.lower()
+
+    def test_duplicate_lines_with_ambiguous_identity_are_unverified(self):
+        from ai_crypto_reviewer.agents.tester import ValidationAgent
+        from ai_crypto_reviewer.agents.base import AgentContext
+
+        original = 'eval(input())\neval(input())\n'
+        finding = Finding("SEC101", Severity.CRITICAL, "eval()", "example.py", 2)
+        patch = Patch("example.py", original, 'eval(input())\n', "Delete one duplicate", finding=finding)
+        results = ValidationAgent(config={"skip_sandbox": True}).execute(
+            AgentContext(target_path="example.py", patches=[patch])
+        ).test_results
+
+        verification = next(result for result in results if result.test_name.startswith("fix_verify:"))
+        assert not verification.passed
+        assert "unverified" in verification.output.lower()
+
+    def test_conflicting_patches_are_unverified_when_sandbox_is_skipped(self):
+        from ai_crypto_reviewer.agents.tester import ValidationAgent
+        from ai_crypto_reviewer.agents.base import AgentContext
+
+        original = 'first = eval("1")\nsecond = eval("2")\n'
+        first = Finding("SEC101", Severity.CRITICAL, "eval()", "example.py", 1)
+        second = Finding("SEC101", Severity.CRITICAL, "eval()", "example.py", 2)
+        patches = [
+            Patch("example.py", original, "first = 1\nsecond = 2\n", "First", finding=first),
+            Patch("example.py", original, "first = 10\nsecond = 20\n", "Second", finding=second),
+        ]
+        results = ValidationAgent(config={"skip_sandbox": True}).execute(
+            AgentContext(target_path="example.py", patches=patches)
+        ).test_results
+
+        verifications = [result for result in results if result.test_name.startswith("fix_verify:")]
+        assert len(verifications) == 2
+        assert all(not result.passed and "unverified" in result.output.lower() for result in verifications)
+
+    def test_aliased_eval_is_not_reported_as_a_fix(self):
+        from ai_crypto_reviewer.agents.tester import ValidationAgent
+        from ai_crypto_reviewer.agents.base import AgentContext
+
+        original = 'value = eval(input())\n'
+        patched = 'from builtins import eval as run\nvalue = run(input())\n'
+        finding = Finding("SEC101", Severity.CRITICAL, "eval()", "example.py", 1)
+        patch = Patch("example.py", original, patched, "Alias eval", finding=finding)
+        results = ValidationAgent(config={"skip_sandbox": True}).execute(
+            AgentContext(target_path="example.py", patches=[patch])
+        ).test_results
+
+        verification = next(result for result in results if result.test_name.startswith("fix_verify:"))
+        assert not verification.passed
+        assert "unverified" in verification.output.lower()
+
+
+def test_reports_distinguish_skipped_tests_from_success():
+    report = ReviewReport(target_path="example.py")
+
+    json_report = report.to_dict()
+    sarif = report_to_sarif(report)
+
+    assert json_report["tests_passed"] is None
+    assert json_report["test_status"] == "not_run"
+    assert sarif["runs"][0]["properties"]["testStatus"] == "not_run"
+    assert sarif["runs"][0]["invocations"][0]["executionSuccessful"] is True
+
+
+def test_json_and_sarif_expose_warning_and_validation_outcomes():
+    finding = Finding("SEC101", Severity.CRITICAL, "eval()", "example.py", 1)
+    patch = Patch("example.py", "old", "new", "Warning", finding=finding, kind="warning")
+    report = ReviewReport(
+        target_path="example.py", patches=[patch],
+        test_results=[RunResult(False, "fix_verify:example.py:SEC101", "Unverified")],
+    )
+
+    json_report = report.to_dict()
+    sarif_properties = report_to_sarif(report)["runs"][0]["properties"]
+
+    assert json_report["test_status"] == "not_run"
+    assert json_report["validation_status"] == "failed"
+    assert json_report["patches"][0]["kind"] == "warning"
+    assert json_report["test_results"][0]["passed"] is False
+    assert sarif_properties["testStatus"] == "not_run"
+    assert sarif_properties["validationStatus"] == "failed"
+    assert sarif_properties["patches"][0]["kind"] == "warning"
+
+
+def test_sarif_recommendation_is_not_a_machine_applicable_fix():
+    finding = Finding(
+        "SEC101", Severity.CRITICAL, "eval()", "example.py", 1,
+        recommendation="Review and replace eval",
+    )
+
+    result = finding_to_sarif_result(finding)
+
+    assert "fixes" not in result
+    assert result["properties"]["recommendation"] == "Review and replace eval"
+
+
+def test_syntax_checks_do_not_imply_sandbox_or_fix_verification_ran():
+    report = ReviewReport(
+        target_path="example.py", test_results=[RunResult(True, "syntax_check:example.py")],
+    )
+
+    json_report = report.to_dict()
+    sarif_properties = report_to_sarif(report)["runs"][0]["properties"]
+
+    assert json_report["test_status"] == "not_run"
+    assert json_report["tests_passed"] is None
+    assert json_report["validation_status"] == "passed"
+    assert json_report["sandbox_test_status"] == "not_run"
+    assert json_report["fix_verification_status"] == "not_run"
+    assert sarif_properties["sandboxTestStatus"] == "not_run"
+    assert sarif_properties["fixVerificationStatus"] == "not_run"
+
+
+def test_partial_sandbox_application_is_distinct_from_passing_suite():
+    report = ReviewReport(target_path="example.py", test_results=[
+        RunResult(False, "apply_patch:example.py", "conflicting patch"),
+        RunResult(True, "sandbox_test_suite", "passed on other applied patches"),
+    ])
+
+    json_report = report.to_dict()
+    sarif_properties = report_to_sarif(report)["runs"][0]["properties"]
+
+    assert json_report["test_status"] == "passed"
+    assert json_report["validation_status"] == "failed"
+    assert json_report["patch_application_status"] == "failed"
+    assert sarif_properties["patchApplicationStatus"] == "failed"

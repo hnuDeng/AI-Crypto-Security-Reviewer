@@ -13,7 +13,7 @@ from ai_crypto_reviewer.orchestrator import SecurityReviewPipeline
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ai-crypto-reviewer",
-        description="AI-powered multi-agent security code review system optimized for cryptographic implementations.",
+        description="Rule-based security review and suggested-patch pipeline for Python and C/C++.",
     )
     parser.add_argument("target", help="Path to the source file or directory to review")
     parser.add_argument("-o", "--output", default="review_output", help="Output directory for reports")

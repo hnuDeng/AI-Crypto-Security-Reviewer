@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -55,12 +56,37 @@ class Sandbox:
         return self.sandbox_path
 
     def get_sandbox_copy(self, relative_path: str = "") -> Path:
-        """Get the path to a file/directory within the sandbox."""
+        """Map a target-relative or absolute target path to its sandbox copy."""
         if not self._sandbox_dir:
             raise EnvironmentError("Sandbox not initialized.")
-        if relative_path:
-            return self._sandbox_dir / self.target_path.name / relative_path
-        return self._sandbox_dir / self.target_path.name
+        sandbox_root = (self._sandbox_dir / self.target_path.name).resolve()
+        if not relative_path:
+            return sandbox_root
+
+        requested_path = Path(relative_path)
+        if ".." in requested_path.parts or (requested_path.anchor and not requested_path.is_absolute()):
+            raise EnvironmentError(f"Path is outside the sandbox target: {relative_path}")
+
+        if self.target_path.is_file():
+            original_path = (
+                requested_path.resolve()
+                if requested_path.is_absolute()
+                else self.target_path.parent / requested_path
+            )
+            if original_path != self.target_path:
+                raise EnvironmentError(f"Path is outside the sandbox target: {relative_path}")
+            return sandbox_root
+
+        if requested_path.is_absolute():
+            try:
+                requested_path = requested_path.resolve().relative_to(self.target_path)
+            except ValueError as error:
+                raise EnvironmentError(f"Path is outside the sandbox target: {relative_path}") from error
+
+        sandbox_file = (sandbox_root / requested_path).resolve()
+        if not sandbox_file.is_relative_to(sandbox_root):
+            raise EnvironmentError(f"Path is outside the sandbox target: {relative_path}")
+        return sandbox_file
 
     def apply_patch_to_file(self, file_path: str, new_content: str) -> None:
         """Write new content to a file within the sandbox."""
@@ -76,6 +102,8 @@ class Sandbox:
     def run_command(self, cmd: str | list[str], timeout: int = 120, cwd: str = "") -> tuple[str, int]:
         """Run a command within the sandbox directory."""
         work_dir = self.get_sandbox_copy(cwd) if cwd else self.get_sandbox_copy()
+        if self.target_path.is_file():
+            work_dir = work_dir.parent
         try:
             if isinstance(cmd, str):
                 result = subprocess.run(
@@ -102,10 +130,10 @@ class Sandbox:
 
         # Try pytest first, then unittest
         for cmd in [
-            ["python", "-m", "pytest", "--tb=short", "-q"],
-            ["python", "-m", "pytest", "--tb=short", "-q", "tests/"],
-            ["python", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"],
-            ["python", "-m", "unittest", "discover"],
+            [sys.executable, "-m", "pytest", "--tb=short", "-q"],
+            [sys.executable, "-m", "pytest", "--tb=short", "-q", "tests/"],
+            [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"],
+            [sys.executable, "-m", "unittest", "discover"],
         ]:
             output, rc = self.run_command(cmd, timeout=timeout)
             if rc >= 0:

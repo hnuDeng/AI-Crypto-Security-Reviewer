@@ -1,10 +1,12 @@
 """Tests for the sandbox environment."""
 
 import os
+import sys
 import tempfile
 import pytest
 from pathlib import Path
 from ai_crypto_reviewer.environment.sandbox import Sandbox
+from ai_crypto_reviewer.exceptions import EnvironmentError
 
 
 @pytest.fixture
@@ -83,6 +85,31 @@ class TestSandbox:
             # No tests dir, should report not found or fail gracefully
             assert isinstance(output, str)
 
+    def test_python_tests_use_current_interpreter(self, sample_project, monkeypatch):
+        test_file = Path(sample_project) / "test_copy.py"
+        test_file.write_text(
+            "from pathlib import Path\n"
+            "def test_patched_source():\n"
+            "    assert 'patched' in Path('main.py').read_text(encoding='utf-8')\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("PATH", "")
+
+        with Sandbox(sample_project) as sandbox:
+            sandbox.apply_patch_to_file("main.py", "value = 'patched'\n")
+            run_command = sandbox.run_command
+
+            def run_with_current_interpreter(command, timeout):
+                assert command[0] == sys.executable
+                return run_command(command, timeout=timeout)
+
+            monkeypatch.setattr(sandbox, "run_command", run_with_current_interpreter)
+            output, exit_code = sandbox.run_python_tests(timeout=30)
+
+        assert exit_code == 0, output
+        assert "1 passed" in output
+        assert "world" in (Path(sample_project) / "main.py").read_text(encoding="utf-8")
+
     def test_isolation(self, sample_project):
         """Verify that sandbox changes don't affect the original."""
         original_content = (Path(sample_project) / "main.py").read_text()
@@ -92,3 +119,70 @@ class TestSandbox:
             assert "MODIFIED" in modified_content
         # Original unchanged
         assert (Path(sample_project) / "main.py").read_text() == original_content
+
+    def test_absolute_patch_path_preserves_original(self, sample_project):
+        original = Path(sample_project) / "utils" / "helper.py"
+        original_content = original.read_text(encoding="utf-8")
+
+        with Sandbox(sample_project) as sandbox:
+            sandbox.apply_patch_to_file(str(original), "value = 'patched'\n")
+
+            assert original.read_text(encoding="utf-8") == original_content
+            assert sandbox.read_file("utils/helper.py") == "value = 'patched'\n"
+
+    @pytest.mark.parametrize("file_path", ["../escaped.py", "../../escaped.py", "utils/../../escaped.py"])
+    def test_rejects_path_traversal(self, sample_project, file_path):
+        with Sandbox(sample_project) as sandbox:
+            with pytest.raises(EnvironmentError):
+                sandbox.get_sandbox_copy(file_path)
+
+            with pytest.raises(EnvironmentError):
+                sandbox.read_file(file_path)
+
+    def test_rejects_absolute_path_outside_target(self, sample_project, tmp_path):
+        outside = tmp_path / "outside.py"
+        outside.write_text("value = 'original'\n", encoding="utf-8")
+
+        with Sandbox(sample_project) as sandbox:
+            with pytest.raises(EnvironmentError):
+                sandbox.apply_patch_to_file(str(outside), "value = 'escaped'\n")
+
+            with pytest.raises(EnvironmentError):
+                sandbox.read_file(str(outside))
+
+        assert outside.read_text(encoding="utf-8") == "value = 'original'\n"
+
+    @pytest.mark.parametrize("absolute_path", [False, True])
+    def test_single_file_patch_preserves_original(self, tmp_path, absolute_path):
+        original = tmp_path / "module.py"
+        original.write_text("value = 'original'\n", encoding="utf-8")
+        patch_path = str(original) if absolute_path else original.name
+
+        with Sandbox(str(original)) as sandbox:
+            sandbox.apply_patch_to_file(patch_path, "value = 'patched'\n")
+
+            assert original.read_text(encoding="utf-8") == "value = 'original'\n"
+            assert sandbox.read_file(patch_path) == "value = 'patched'\n"
+            assert sandbox.get_sandbox_copy().read_text(encoding="utf-8") == "value = 'patched'\n"
+
+    def test_single_file_rejects_other_files(self, tmp_path):
+        original = tmp_path / "module.py"
+        original.write_text("value = 1\n", encoding="utf-8")
+
+        with Sandbox(str(original)) as sandbox:
+            with pytest.raises(EnvironmentError):
+                sandbox.apply_patch_to_file("other.py", "value = 2\n")
+
+    def test_single_file_command_uses_copy_directory(self, tmp_path):
+        original = tmp_path / "module.py"
+        original.write_text("value = 'original'\n", encoding="utf-8")
+
+        with Sandbox(str(original)) as sandbox:
+            output, exit_code = sandbox.run_command([
+                sys.executable,
+                "-c",
+                "from pathlib import Path; print(Path('module.py').read_text())",
+            ])
+
+        assert exit_code == 0, output
+        assert "value = 'original'" in output

@@ -15,6 +15,7 @@ setup(
     author="AI Crypto Security Team",
     url="https://github.com/hnuDeng/AI-Crypto-Security-Reviewer",
     packages=find_packages(exclude=["tests", "tests.*"]),
+    package_data={"ai_crypto_reviewer": ["data/*.json"]},
     python_requires=">=3.10",
     install_requires=[
         "pyyaml>=6.0",

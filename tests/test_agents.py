@@ -1,6 +1,7 @@
 """Tests for the agents (analyzer, coder, tester)."""
 
 import os
+import sys
 import tempfile
 import pytest
 from pathlib import Path
@@ -8,6 +9,7 @@ from ai_crypto_reviewer.agents.base import AgentContext
 from ai_crypto_reviewer.agents.analyzer import AnalyzerAgent
 from ai_crypto_reviewer.agents.coder import CoderAgent
 from ai_crypto_reviewer.agents.tester import ValidationAgent
+from ai_crypto_reviewer.types import Patch
 
 
 @pytest.fixture
@@ -194,6 +196,132 @@ class TestCoderAgent:
 
 
 class TestValidationAgent:
+    def test_multiple_disjoint_patches_on_one_file_are_tested_together(self, tmp_path):
+        project = tmp_path / "project"
+        project.mkdir()
+        original = project / "module.py"
+        original_code = "first = 0\nsecond = 0\n"
+        original.write_text(original_code, encoding="utf-8")
+        context = AgentContext(target_path=str(project))
+        context.patches = [
+            Patch(str(original), original_code, "first = 1\nsecond = 0\n", "Change first"),
+            Patch(str(original), original_code, "first = 0\nsecond = 2\n", "Change second"),
+        ]
+        command = (
+            f'"{sys.executable}" -c "from pathlib import Path; '
+            "assert Path('module.py').read_text(encoding='utf-8') == 'first = 1\\nsecond = 2\\n'\""
+        )
+        tester = ValidationAgent(config={"test_command": command, "skip_fix_verification": True})
+
+        results = tester.execute(context).test_results
+
+        assert all(result.passed for result in results), [(result.test_name, result.output) for result in results]
+        assert original.read_text(encoding="utf-8") == original_code
+
+    def test_conflicting_patches_do_not_silently_overwrite_each_other(self, tmp_path):
+        project = tmp_path / "project"
+        project.mkdir()
+        original = project / "module.py"
+        original_code = "value = 0\n"
+        original.write_text(original_code, encoding="utf-8")
+        context = AgentContext(target_path=str(project))
+        context.patches = [
+            Patch(str(original), original_code, "value = 1\n", "First change"),
+            Patch(str(original), original_code, "value = 2\n", "Conflicting change"),
+        ]
+        tester = ValidationAgent(config={
+            "test_command": f'"{sys.executable}" -c "print(\'suite ran\')"',
+            "skip_fix_verification": True,
+        })
+
+        results = tester.execute(context).test_results
+
+        assert any(not result.passed and "conflict" in result.output.lower() for result in results)
+        assert original.read_text(encoding="utf-8") == original_code
+
+    @pytest.mark.parametrize("single_file", [False, True])
+    def test_relative_target_patches_reach_copied_source(self, tmp_path, monkeypatch, single_file):
+        project = tmp_path / "project"
+        project.mkdir()
+        original = project / "module.py"
+        original_code = 'value = eval("1")\n'
+        original.write_text(original_code, encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        context = AgentContext(target_path="project/module.py" if single_file else "project")
+        context = AnalyzerAgent().execute(context)
+        context = CoderAgent().execute(context)
+        tester = ValidationAgent(config={
+            "test_command": f'"{sys.executable}" -c "from pathlib import Path; '
+                            "assert 'literal_eval' in Path('module.py').read_text(encoding='utf-8')\"",
+            "skip_fix_verification": True,
+        })
+
+        result = tester.execute(context)
+
+        assert context.patches
+        assert original.read_text(encoding="utf-8") == original_code
+        assert all(test.passed for test in result.test_results), [
+            (test.test_name, test.output) for test in result.test_results if not test.passed
+        ]
+
+    @pytest.mark.parametrize("single_file", [False, True])
+    @pytest.mark.parametrize("patched_code, valid_syntax", [("value = 'patched'\n", True), ("def broken(\n", False)])
+    def test_sandbox_validates_patched_copy(self, tmp_path, monkeypatch, single_file, patched_code, valid_syntax):
+        project = tmp_path / "project"
+        project.mkdir()
+        original = project / "quoted's module.py"
+        original_code = "value = 'original'\n"
+        original.write_text(original_code, encoding="utf-8")
+        context = AgentContext(target_path=str(original if single_file else project))
+        context.patches = [Patch(
+            file_path=original.as_posix(),
+            original_code=original_code,
+            patched_code=patched_code,
+            description="Validate sandbox copy",
+        )]
+        tester = ValidationAgent(config={
+            "test_command": f'"{sys.executable}" -c "print(\'suite ran\')"',
+            "skip_fix_verification": True,
+        })
+        monkeypatch.setenv("PATH", "")
+
+        result = tester.execute(context)
+
+        assert original.read_text(encoding="utf-8") == original_code
+        sandbox_results = {test.test_name: test for test in result.test_results}
+        assert "sandbox_setup" not in sandbox_results
+        assert sandbox_results["sandbox_test_suite"].passed
+        syntax_result = sandbox_results[f"sandbox_syntax:{original.as_posix()}"]
+        assert syntax_result.passed is valid_syntax, syntax_result.output
+        if not valid_syntax:
+            assert "SyntaxError" in syntax_result.output
+
+    def test_rejected_patch_is_not_syntax_checked(self, tmp_path):
+        project = tmp_path / "project"
+        project.mkdir()
+        outside = tmp_path / "outside.py"
+        original_code = "value = 'original'\n"
+        outside.write_text(original_code, encoding="utf-8")
+        context = AgentContext(target_path=str(project))
+        context.patches = [Patch(
+            file_path=outside.as_posix(),
+            original_code=original_code,
+            patched_code="value = 'escaped'\n",
+            description="Reject outside patch",
+        )]
+        tester = ValidationAgent(config={
+            "test_command": f'"{sys.executable}" -c "print(\'suite ran\')"',
+            "skip_fix_verification": True,
+        })
+
+        result = tester.execute(context)
+
+        assert outside.read_text(encoding="utf-8") == original_code
+        apply_results = [test for test in result.test_results if test.test_name.startswith("apply_patch:")]
+        assert len(apply_results) == 1
+        assert not apply_results[0].passed
+        assert not any(test.test_name.startswith("sandbox_syntax:") for test in result.test_results)
+
     def test_validates_syntax(self, vulnerable_python_file):
         import ast
         # Create a simple patch
