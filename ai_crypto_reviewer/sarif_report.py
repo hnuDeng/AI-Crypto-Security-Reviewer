@@ -63,11 +63,7 @@ def finding_to_sarif_result(finding: Finding) -> dict[str, Any]:
         result["properties"] = {"cwe": finding.cwe_id}
 
     if finding.recommendation:
-        result["fixes"] = [
-            {
-                "description": {"text": finding.recommendation},
-            }
-        ]
+        result.setdefault("properties", {})["recommendation"] = finding.recommendation
 
     return result
 
@@ -97,6 +93,7 @@ def finding_to_sarif_rule(finding: Finding) -> dict[str, Any]:
 
 def report_to_sarif(report: ReviewReport) -> dict[str, Any]:
     """Convert a ReviewReport to SARIF v2.1.0 format."""
+    report_data = report.to_dict()
     # Collect unique rules
     rules_seen: dict[str, dict] = {}
     results = []
@@ -121,7 +118,7 @@ def report_to_sarif(report: ReviewReport) -> dict[str, Any]:
                 },
                 "invocations": [
                     {
-                        "executionSuccessful": report.all_tests_passed,
+                        "executionSuccessful": not report.errors,
                         "endTimeUtc": datetime.now(timezone.utc).isoformat(),
                     }
                 ],
@@ -132,6 +129,13 @@ def report_to_sarif(report: ReviewReport) -> dict[str, Any]:
                     "highCount": len(report.high_findings),
                     "cryptoCount": len(report.crypto_findings),
                     "patchesGenerated": len(report.patches),
+                    "testStatus": report.test_status,
+                    "validationStatus": report.validation_status,
+                    "sandboxTestStatus": report.sandbox_test_status,
+                    "fixVerificationStatus": report.fix_verification_status,
+                    "patchApplicationStatus": report.patch_application_status,
+                    "patches": report_data["patches"],
+                    "testResults": report_data["test_results"],
                     "summary": report.summary,
                 },
             }

@@ -9,3 +9,6 @@ venv/
 build/
 dist/
 review_output/
+.env
+.env.*
+!.env.example

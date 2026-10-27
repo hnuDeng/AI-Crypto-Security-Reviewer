@@ -62,6 +62,7 @@ class Patch:
     finding: Finding | None = None
     start_line: int = 0
     end_line: int = 0
+    kind: str = "fix"
 
     @property
     def diff(self) -> str:
@@ -118,6 +119,34 @@ class ReviewReport:
     def all_tests_passed(self) -> bool:
         return all(r.passed for r in self.test_results) if self.test_results else True
 
+    @property
+    def test_status(self) -> str:
+        return self.sandbox_test_status
+
+    @property
+    def validation_status(self) -> str:
+        if not self.test_results:
+            return "not_run"
+        return "passed" if self.all_tests_passed else "failed"
+
+    def _status_for(self, prefixes: tuple[str, ...]) -> str:
+        matching = [result for result in self.test_results if result.test_name.startswith(prefixes)]
+        if not matching:
+            return "not_run"
+        return "passed" if all(result.passed for result in matching) else "failed"
+
+    @property
+    def sandbox_test_status(self) -> str:
+        return self._status_for(("sandbox_test_suite",))
+
+    @property
+    def fix_verification_status(self) -> str:
+        return self._status_for(("fix_verify:",))
+
+    @property
+    def patch_application_status(self) -> str:
+        return self._status_for(("apply_patch:",))
+
     def to_dict(self) -> dict[str, Any]:
         from ai_crypto_reviewer.risk import compute_risk_score, risk_level
 
@@ -129,7 +158,31 @@ class ReviewReport:
             "high_count": len(self.high_findings),
             "crypto_count": len(self.crypto_findings),
             "patches_generated": len(self.patches),
-            "tests_passed": self.all_tests_passed,
+            "tests_passed": None if self.test_status == "not_run" else self.test_status == "passed",
+            "test_status": self.test_status,
+            "validation_status": self.validation_status,
+            "sandbox_test_status": self.sandbox_test_status,
+            "fix_verification_status": self.fix_verification_status,
+            "patch_application_status": self.patch_application_status,
+            "patches": [
+                {
+                    "file": patch.file_path,
+                    "description": patch.description,
+                    "kind": patch.kind,
+                    "rule_id": patch.finding.rule_id if patch.finding else None,
+                }
+                for patch in self.patches
+            ],
+            "test_results": [
+                {
+                    "name": result.test_name,
+                    "passed": result.passed,
+                    "output": result.output,
+                    "exit_code": result.exit_code,
+                    "duration_seconds": result.duration_seconds,
+                }
+                for result in self.test_results
+            ],
             "summary": self.summary,
             "errors": self.errors,
             "risk_score": score,

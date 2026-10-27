@@ -196,6 +196,49 @@ class TestCoderAgent:
 
 
 class TestValidationAgent:
+    def test_multiple_disjoint_patches_on_one_file_are_tested_together(self, tmp_path):
+        project = tmp_path / "project"
+        project.mkdir()
+        original = project / "module.py"
+        original_code = "first = 0\nsecond = 0\n"
+        original.write_text(original_code, encoding="utf-8")
+        context = AgentContext(target_path=str(project))
+        context.patches = [
+            Patch(str(original), original_code, "first = 1\nsecond = 0\n", "Change first"),
+            Patch(str(original), original_code, "first = 0\nsecond = 2\n", "Change second"),
+        ]
+        command = (
+            f'"{sys.executable}" -c "from pathlib import Path; '
+            "assert Path('module.py').read_text(encoding='utf-8') == 'first = 1\\nsecond = 2\\n'\""
+        )
+        tester = ValidationAgent(config={"test_command": command, "skip_fix_verification": True})
+
+        results = tester.execute(context).test_results
+
+        assert all(result.passed for result in results), [(result.test_name, result.output) for result in results]
+        assert original.read_text(encoding="utf-8") == original_code
+
+    def test_conflicting_patches_do_not_silently_overwrite_each_other(self, tmp_path):
+        project = tmp_path / "project"
+        project.mkdir()
+        original = project / "module.py"
+        original_code = "value = 0\n"
+        original.write_text(original_code, encoding="utf-8")
+        context = AgentContext(target_path=str(project))
+        context.patches = [
+            Patch(str(original), original_code, "value = 1\n", "First change"),
+            Patch(str(original), original_code, "value = 2\n", "Conflicting change"),
+        ]
+        tester = ValidationAgent(config={
+            "test_command": f'"{sys.executable}" -c "print(\'suite ran\')"',
+            "skip_fix_verification": True,
+        })
+
+        results = tester.execute(context).test_results
+
+        assert any(not result.passed and "conflict" in result.output.lower() for result in results)
+        assert original.read_text(encoding="utf-8") == original_code
+
     @pytest.mark.parametrize("single_file", [False, True])
     def test_relative_target_patches_reach_copied_source(self, tmp_path, monkeypatch, single_file):
         project = tmp_path / "project"
